@@ -20,10 +20,11 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [blogUrl, setBlogUrl] = useState<string | null>(null);
   const [formData, setFormData] = useState<BlogPayload>({
-    gemini_api_key: localStorage.getItem("gemini_api_key") ?? "",
-    blog_id: localStorage.getItem("blog_id") ?? "",
+    gemini_api_key: typeof window !== "undefined" ? localStorage.getItem("gemini_api_key") ?? "" : "",
+    blog_id: typeof window !== "undefined" ? localStorage.getItem("blog_id") ?? "" : "",
     topic: "",
   });
+  
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
