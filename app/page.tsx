@@ -9,6 +9,7 @@ import { Loader2, Send, Eye, Key, BookOpen, FileText, ExternalLink } from "lucid
 import { useTheme } from "next-themes";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
+import axios from 'axios';
 
 interface BlogPayload {
   gemini_api_key: string;
@@ -44,19 +45,17 @@ export default function Home() {
     setBlogUrl(null);
 
     try {
-      const response = await fetch("/api/publish", {
-        method: "POST",
+      const response = await axios.post("/api/publish", formData, {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData),
       });
 
-      if (!response.ok) {
+      if (response.status !== 200) {
         throw new Error("Failed to generate blog");
       }
 
-      const data = await response.json();
+      const data = response.data;
       console.log("Blog generated and published:", data.url);
       setBlogUrl(data.url);
       setTimeout(() => {
