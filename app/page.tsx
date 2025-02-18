@@ -46,9 +46,9 @@ export default function Home() {
 
     try {
       const response = await axios.post("/api/publish", formData, {
-        headers: {
-          "Content-Type": "application/json",
-        },
+        // headers: {
+        //   "Content-Type": "application/json",
+        // },
       });
 
       if (response.status !== 200) {
@@ -163,15 +163,6 @@ export default function Home() {
                 </>
               )}
             </Button>
-
-            {isLoading && (
-              <>
-              <div className="flex items-start justify-center">
-                <iframe src="https://gifer.com/embed/TvTG" width="80%" height="100%" allowFullScreen>
-                </iframe>
-              </div>
-              </>
-             )}
 
             {blogUrl && (
               <a

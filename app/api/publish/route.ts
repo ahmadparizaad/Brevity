@@ -72,7 +72,7 @@ async function generatePost(topic: string, apiKey: string) {
     const text = response.text();
 
     return {
-      title: text.split('\n')[0].trim().replace(/^#\s*/, '').replace(/^Title:\s*/, ''),
+      title: text.split('\n')[0].trim().replace(/^#\s*/, '').replace(/^Title:\s*/, '').slice(2),
       content: text.split('\n').slice(1).join('\n')
     };
   } catch (error) {
