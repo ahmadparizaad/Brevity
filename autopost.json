@@ -1,0 +1,281 @@
+{
+    "name": "AI Blog Generator",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "generate-blog",
+          "options": {}
+        },
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 1,
+        "position": [
+          250,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "functionCode": "// Validate input parameters\nconst input = $input.item.json.body || $input.item.json;\n\nif (!input.gemini_api_key || !input.blog_id || !input.topic || !input.access_token) {\n  return {\n    error: true,\n    message: 'Missing required parameters: gemini_api_key, blog_id, topic, and access_token are required'\n  };\n}\n\n// Return validated data\nreturn {\n  gemini_api_key: input.gemini_api_key,\n  blog_id: input.blog_id,\n  topic: input.topic,\n  access_token: input.access_token\n};"
+        },
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 1,
+        "position": [
+          450,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{!!$json.error}}",
+                "value2": true,
+                "operation": "equal"
+              }
+            ]
+          }
+        },
+        "name": "Input Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 1,
+        "position": [
+          650,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "queryAuth",
+          "options": {
+            "queryParameters": {
+              "parameters": [
+                {
+                  "name": "key",
+                  "value": "={{$node[\"Validate Input\"].json[\"gemini_api_key\"]}}"
+                }
+              ]
+            }
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "contents",
+                "value": "=[{\"parts\":[{\"text\":\"Write a detailed blog post about the following topic: {{$node[\"Validate Input\"].json[\"topic\"]}}. Make it comprehensive, engaging, and between 800-1200 words. Include an introduction, several sections with subheadings, and a conclusion.\"}],\"role\":\"user\"}]"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "name": "Generate Blog Content",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 3,
+        "position": [
+          850,
+          250
+        ]
+      },
+      {
+        "parameters": {
+          "functionCode": "// Extract blog content from Gemini API response\nconst response = $input.item.json;\n\nif (!response.candidates || !response.candidates[0] || !response.candidates[0].content || !response.candidates[0].content.parts || !response.candidates[0].content.parts[0].text) {\n  return {\n    error: true,\n    message: 'Failed to generate blog content'\n  };\n}\n\nconst blogContent = response.candidates[0].content.parts[0].text;\nconst blogTitle = $input.item.json.topic;\n\nreturn {\n  title: blogTitle,\n  content: blogContent,\n  blog_id: $node[\"Validate Input\"].json.blog_id,\n  access_token: $node[\"Validate Input\"].json.access_token\n};"
+        },
+        "name": "Process Content",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 1,
+        "position": [
+          1050,
+          250
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://www.googleapis.com/blogger/v3/blogs/{{$node[\"Process Content\"].json[\"blog_id\"]}}/posts/",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "headerAuth",
+          "method": "POST",
+          "options": {
+            "headerParameters": {
+              "parameters": [
+                {
+                  "name": "Authorization",
+                  "value": "=Bearer {{$node[\"Process Content\"].json[\"access_token\"]}}"
+                }
+              ]
+            }
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "kind",
+                "value": "blogger#post"
+              },
+              {
+                "name": "title",
+                "value": "={{$node[\"Process Content\"].json[\"title\"]}}"
+              },
+              {
+                "name": "content",
+                "value": "={{$node[\"Process Content\"].json[\"content\"]}}"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "name": "Publish To Blog",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 3,
+        "position": [
+          1250,
+          250
+        ]
+      },
+      {
+        "parameters": {
+          "functionCode": "// Format successful response\nconst response = $input.item.json;\n\nreturn {\n  success: true,\n  url: response.url,\n  title: response.title,\n  published: response.published\n};"
+        },
+        "name": "Success Response",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 1,
+        "position": [
+          1450,
+          250
+        ]
+      },
+      {
+        "parameters": {
+          "functionCode": "// Return error message\nreturn {\n  success: false,\n  message: $input.item.json.message || 'Validation error: All fields are required'\n};"
+        },
+        "name": "Error Response",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 1,
+        "position": [
+          850,
+          450
+        ]
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "name": "Respond to Webhook",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1650,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Input Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Input Valid?": {
+        "main": [
+          [
+            {
+              "node": "Generate Blog Content",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate Blog Content": {
+        "main": [
+          [
+            {
+              "node": "Process Content",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Content": {
+        "main": [
+          [
+            {
+              "node": "Publish To Blog",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Publish To Blog": {
+        "main": [
+          [
+            {
+              "node": "Success Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Success Response": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Error Response": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }

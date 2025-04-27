@@ -1,20 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Send, Eye, Key, BookOpen, FileText, ExternalLink } from "lucide-react";
+import { Loader2, Send, Eye, Key, BookOpen, FileText, ExternalLink, LogIn, LogOut, Settings } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import axios from 'axios';
+import { useAuth } from "@/hooks/use-auth";
+import Link from "next/link";
 
 interface BlogPayload {
   gemini_api_key: string;
   blog_id: string;
   topic: string;
+  access_token?: string;
 }
 
 export default function Home() {
@@ -27,9 +30,31 @@ export default function Home() {
   });
   
   const { toast } = useToast();
+  const { isAuthenticated, isLoading: authLoading, user, login, logout } = useAuth();
+
+  // Function to get access token
+  const getAccessToken = async () => {
+    try {
+      const response = await axios.get('/api/auth/get-token');
+      return response.data.access_token;
+    } catch (error) {
+      console.error('Failed to get access token:', error);
+      return null;
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Check if user is authenticated
+    if (!isAuthenticated) {
+      toast({
+        title: "Authentication Required",
+        description: "Please login with Google to publish to your blog",
+        variant: "destructive",
+      });
+      return;
+    }
     
     // Validate inputs
     if (!formData.gemini_api_key || !formData.blog_id || !formData.topic) {
@@ -45,11 +70,24 @@ export default function Home() {
     setBlogUrl(null);
 
     try {
-      const response = await axios.post("/api/publish", formData, {
-        // headers: {
-        //   "Content-Type": "application/json",
-        // },
-      });
+      // Get access token for n8n workflow
+      const access_token = await getAccessToken();
+      
+      if (!access_token) {
+        throw new Error("Failed to get access token. Please try logging in again.");
+      }
+      
+      // Add access token to request payload
+      const payloadWithToken = {
+        ...formData,
+        access_token
+      };
+      
+      // Forward request to n8n webhook endpoint instead of local API
+      const response = await axios.post(
+        "https://ahmadparizaad.app.n8n.cloud/webhook-test/generate-blog", 
+        payloadWithToken
+      );
 
       if (response.status !== 200) {
         throw new Error("Failed to generate blog");
@@ -58,10 +96,13 @@ export default function Home() {
       const data = response.data;
       console.log("Blog generated and published:", data.url);
       setBlogUrl(data.url);
-      setTimeout(() => {
-        window.open(data.url, "_blank");
-      }, 1000);
-
+      
+      // Open blog in new tab
+      if (data.url) {
+        setTimeout(() => {
+          window.open(data.url, "_blank");
+        }, 1000);
+      }
       
       toast({
         title: "Success!",
@@ -73,10 +114,20 @@ export default function Home() {
         localStorage.setItem("gemini_api_key", formData.gemini_api_key);
         localStorage.setItem("blog_id", formData.blog_id);
       }
-    } catch (error) {
+    } catch (error: any) {
+      // Handle authentication errors
+      if (error.response && error.response.status === 401) {
+        toast({
+          title: "Authentication Error",
+          description: "Your session has expired. Please login again.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
       toast({
         title: "Error",
-        description: "Failed to generate and publish blog. Please try again.",
+        description: error.response?.data?.error || error.message || "Failed to generate and publish blog. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -92,8 +143,64 @@ export default function Home() {
             <BookOpen className="h-6 w-6" />
             <h1 className="text-2xl font-bold">Blog Generator</h1>
           </div>
-          <ThemeToggle />
+          <div className="flex items-center gap-2">
+            {isAuthenticated ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">{user?.email}</span>
+                {isAuthenticated && (
+                  <Link href="/admin">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="flex items-center gap-1"
+                    >
+                      <Settings className="h-4 w-4" />
+                      <span className="sr-only md:not-sr-only">Admin</span>
+                    </Button>
+                  </Link>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={logout}
+                  className="flex items-center gap-1"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </Button>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                onClick={login}
+                className="flex items-center gap-1"
+              >
+                <LogIn className="h-4 w-4" />
+                Login with Google
+              </Button>
+            )}
+            <ThemeToggle />
+          </div>
         </div>
+
+        {!isAuthenticated && !authLoading && (
+          <Card className="p-6 bg-amber-50 dark:bg-amber-950 border-amber-300 dark:border-amber-800">
+            <div className="flex flex-col gap-2">
+              <h2 className="text-lg font-medium">Authentication Required</h2>
+              <p className="text-sm text-muted-foreground">
+                You need to authenticate with Google to publish blogs. 
+                This will allow the app to post to your Blogger account.
+              </p>
+              <Button
+                onClick={login}
+                className="mt-2 w-full md:w-auto"
+              >
+                <LogIn className="mr-2 h-4 w-4" />
+                Login with Google
+              </Button>
+            </div>
+          </Card>
+        )}
 
         <Card className="p-6">
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -149,7 +256,7 @@ export default function Home() {
             <Button
               type="submit"
               className="w-full transition-all duration-200"
-              disabled={isLoading}
+              disabled={isLoading || !isAuthenticated}
             >
               {isLoading ? (
                 <>

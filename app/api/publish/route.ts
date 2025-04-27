@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { marked } from 'marked';
 import { google } from 'googleapis';
+import { getIronSession } from 'iron-session';
+import { sessionOptions, SessionData } from '@/lib/session';
+
+// Add dynamic export for API routes
+export const dynamic = 'force-dynamic';
 
 const systemPrompt = `
 You are a professional blog writer specializing in AI, emerging technologies, and innovations. Your readers are tech enthusiasts, developers, and industry professionals who love exploring new advancements.  
@@ -44,46 +49,72 @@ Your goal is to create **engaging, well-structured, and informative** articles t
 Now, generate a high-quality article on the provided topic using this structure.
 `;
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.CLIENT_ID,
-  process.env.CLIENT_SECRET,
-  process.env.REDIRECT_URI
-);
-
-// Refresh the access token dynamically
-async function getAccessToken() {
-  const tokens = process.env.REFRESH_TOKEN;
-  if (!tokens) {
-    throw new Error('REFRESH_TOKEN environment variable is not set');
+// Get access token from session or request
+async function getUserToken(request: Request, providedToken?: string) {
+  // If token is provided from the request, use it
+  if (providedToken) {
+    return providedToken;
   }
-  oauth2Client.setCredentials({ refresh_token: tokens });
-  const { token } = await oauth2Client.getAccessToken();
-  return token;
-}
 
-async function generatePost(topic: string, apiKey: string) {
+  // Otherwise try to get it from session
+  const session = await getIronSession<SessionData>(request, new Response(), sessionOptions);
+  
+  if (!session.isLoggedIn || !session.access_token) {
+    throw new Error('User not authenticated');
+  }
+  
   try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
-
-    const prompt = `${systemPrompt}\n\nTopic: ${topic}`;
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
-
-    return {
-      title: text.split('\n')[0].trim().replace(/^#\s*/, '').replace(/^Title:\s*/, '').slice(2),
-      content: text.split('\n').slice(1).join('\n')
-    };
+    // Check if token is expired
+    if (session.expiry_date && new Date().getTime() > session.expiry_date) {
+      // We need to refresh the token
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.GOOGLE_REDIRECT_URI
+      );
+      
+      oauth2Client.setCredentials({
+        refresh_token: session.refresh_token
+      });
+      
+      const { token } = await oauth2Client.getAccessToken();
+      
+      // Update the session with new token
+      session.access_token = token || '';
+      await session.save();
+      
+      return token;
+    }
+    
+    return session.access_token;
   } catch (error) {
-    console.error('Error generating post:', error);
-    throw new Error('Failed to generate blog post');
+    console.error('Error getting access token:', error);
+    throw new Error('Authentication error');
   }
 }
 
-async function createPost(blogId: string, title: string, content: string) {
+  async function generatePost(topic: string, apiKey: string) {
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+
+      const prompt = `${systemPrompt}\n\nTopic: ${topic}`;
+      const result = await model.generateContent(prompt);
+      const response = result.response;
+      const text = response.text();
+
+      return {
+        title: text.split('\n')[0].trim().replace(/^#\s*/, '').replace(/^Title:\s*/, '').slice(2),
+        content: text.split('\n').slice(1).join('\n')
+      };
+    } catch (error) {
+      console.error('Error generating post:', error);
+      throw new Error('Failed to generate blog post');
+    }
+  }
+
+async function createPost(blogId: string, title: string, content: string, accessToken: string) {
   try {
-    const accessToken = await getAccessToken(); // Get fresh token
     const markedContent = marked(content);
     const response = await fetch(`https://www.googleapis.com/blogger/v3/blogs/${blogId}/posts`, {
       method: 'POST',
@@ -98,16 +129,18 @@ async function createPost(blogId: string, title: string, content: string) {
       }),
     });
 
-    // if (!response.ok) {
-    //   throw new Error('Failed to publish blog post');
-    // }
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('Blogger API error:', errorData);
+      throw new Error(errorData.error?.message || 'Failed to publish blog post');
+    }
 
     const data = await response.json();
     console.log('Blog post created:', data);
     return { url: data.url };
   } catch (error) {
     console.error('Error creating post:', error);
-    throw new Error('Failed to publish blog post');
+    throw error;
   }
 }
 
@@ -116,8 +149,8 @@ export async function POST(request: Request) {
     const body = await request.json();
     console.log("Raw Request Body:", body); // Debugging line
 
-    const { topic, blog_id, gemini_api_key } = body;
-    console.log("Request Body:", { topic, blog_id, gemini_api_key }); // Debugging line
+    const { topic, blog_id, gemini_api_key, access_token } = body;
+    console.log("Request Body:", { topic, blog_id, gemini_api_key, access_token: access_token ? '[PRESENT]' : '[MISSING]' }); // Debugging line
 
     if (!topic || !blog_id || !gemini_api_key) {
       return NextResponse.json(
@@ -126,14 +159,33 @@ export async function POST(request: Request) {
       );
     }
 
+    // Check if user is authenticated - either with token from the request or from session
+    const accessToken = await getUserToken(request, access_token);
+    
+    if (!accessToken) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
     const generatedPost = await generatePost(topic, gemini_api_key);
-    const result = await createPost(blog_id, generatedPost.title, generatedPost.content);
+    const result = await createPost(blog_id, generatedPost.title, generatedPost.content, accessToken);
 
     return NextResponse.json(result);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error in publish endpoint:', error);
+    
+    // Check if it's an authentication error
+    if (error.message === 'User not authenticated' || error.message === 'Authentication error') {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+    
     return NextResponse.json(
-      { error: 'Failed to generate and publish blog post' },
+      { error: error.message || 'Failed to generate and publish blog post' },
       { status: 500 }
     );
   }
