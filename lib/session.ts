@@ -1,4 +1,5 @@
 import { SessionOptions } from 'iron-session';
+import { cookies } from 'next/headers';
 
 // This is where we define our session options
 export const sessionOptions: SessionOptions = {
@@ -27,7 +28,9 @@ export interface SessionData {
 }
 
 // Helper to get typed session data
-export function getSessionData(req: Request): Promise<SessionData> {
-  const { cookies } = req;
-  return cookies.get(sessionOptions.cookieName)?.value || { isLoggedIn: false };
+export async function getSessionData(req: Request): Promise<SessionData> {
+  // Use Next.js cookies API instead of direct req.cookies
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get(sessionOptions.cookieName)?.value;
+  return sessionCookie ? (JSON.parse(sessionCookie) as SessionData) : { isLoggedIn: false };
 }
