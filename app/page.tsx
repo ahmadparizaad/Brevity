@@ -83,9 +83,9 @@ export default function Home() {
         access_token
       };
       
-      // Forward request to n8n webhook endpoint instead of local API
+      // Use our proxy API instead of calling n8n directly to avoid CORS issues
       const response = await axios.post(
-        "https://ahmadparizaad.app.n8n.cloud/webhook-test/generate-blog", 
+        "/api/n8n-proxy", 
         payloadWithToken
       );
 
@@ -94,8 +94,8 @@ export default function Home() {
       }
 
       const data = response.data;
-      console.log("Blog generated and published:", data.url);
-      setBlogUrl(data.url);
+      console.log("Blog generated and published:", data[0].url);
+      setBlogUrl(data[0].url);
       
       // Open blog in new tab
       if (data.url) {
@@ -141,7 +141,7 @@ export default function Home() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <BookOpen className="h-6 w-6" />
-            <h1 className="text-2xl font-bold">Blog Generator</h1>
+            <h1 className="text-2xl font-bold">Brevity AI</h1>
           </div>
           <div className="flex items-center gap-2">
             {isAuthenticated ? (
@@ -155,7 +155,7 @@ export default function Home() {
                       className="flex items-center gap-1"
                     >
                       <Settings className="h-4 w-4" />
-                      <span className="sr-only md:not-sr-only">Admin</span>
+                      <span className="sr-only md:not-sr-only">Dashboard</span>
                     </Button>
                   </Link>
                 )}

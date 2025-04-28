@@ -4,20 +4,55 @@ import { Card } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, KeyRound, Copy, Info } from "lucide-react";
+import { AlertCircle, KeyRound, Copy, Info, BookOpen, ExternalLink, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import axios from 'axios';
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { formatDistanceToNow } from 'date-fns';
+
+interface BlogPost {
+  _id: string;
+  title: string;
+  topic: string;
+  url: string;
+  createdAt: string;
+  user: {
+    name: string;
+    email: string;
+  };
+}
+
+interface PaginationData {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
 
 export default function AdminPage() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
   const [copied, setCopied] = useState(false);
+  const [blogs, setBlogs] = useState<BlogPost[]>([]);
+  const [pagination, setPagination] = useState<PaginationData>({ total: 0, page: 1, limit: 10, pages: 0 });
+  const [isLoadingBlogs, setIsLoadingBlogs] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Redirect if not authenticated
-  if (!isLoading && !isAuthenticated) {
-    router.push('/');
-    return null;
-  }
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/');
+    }
+  }, [isLoading, isAuthenticated, router]);
 
   // Required environment variables
   const envVars = [
@@ -25,6 +60,7 @@ export default function AdminPage() {
     { name: 'GOOGLE_CLIENT_SECRET', description: 'Google OAuth Client Secret' },
     { name: 'GOOGLE_REDIRECT_URI', description: 'OAuth redirect URI (e.g., http://localhost:3000/api/auth/callback)' },
     { name: 'ENCRYPTION_KEY', description: '32-byte key for secure token storage' },
+    { name: 'MONGODB_URI', description: 'MongoDB connection string' },
   ];
 
   const envVarText = envVars.map(v => `${v.name}=your_value_here`).join('\n');
@@ -34,11 +70,61 @@ export default function AdminPage() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+  
+  // Fetch blog posts
+  const fetchBlogs = async (page = 1) => {
+    try {
+      setIsLoadingBlogs(true);
+      setError(null);
+      
+      const response = await axios.get(`/api/blogs?page=${page}&limit=10`);
+      setBlogs(response.data.blogs);
+      setPagination(response.data.pagination);
+    } catch (err: any) {
+      console.error('Error fetching blogs:', err);
+      setError(err.response?.data?.error || err.message || 'Failed to load blog history');
+    } finally {
+      setIsLoadingBlogs(false);
+    }
+  };
+  
+  // Format date
+  const formatDate = (dateString: string) => {
+    try {
+      return formatDistanceToNow(new Date(dateString), { addSuffix: true });
+    } catch (err) {
+      return 'Unknown date';
+    }
+  };
+  
+  // Handle pagination
+  const changePage = (newPage: number) => {
+    if (newPage > 0 && newPage <= pagination.pages) {
+      fetchBlogs(newPage);
+    }
+  };
+  
+  // Load blogs on component mount
+  useEffect(() => {
+    if (isAuthenticated && !isLoading) {
+      fetchBlogs();
+    }
+  }, [isAuthenticated, isLoading]);
 
   return (
     <div className="min-h-screen bg-background p-4 md:p-6 lg:p-8">
-      <div className="max-w-3xl mx-auto space-y-8">
-        <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+      <div className="max-w-5xl mx-auto space-y-8">
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+          <Button 
+            variant="outline" 
+            onClick={() => router.push('/')}
+            className="flex items-center gap-1"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Back to Home
+          </Button>
+        </div>
         
         {isAuthenticated && (
           <Alert className="bg-green-50 dark:bg-green-950 border-green-300 dark:border-green-800">
@@ -47,9 +133,103 @@ export default function AdminPage() {
             <AlertDescription>{user?.email}</AlertDescription>
           </Alert>
         )}
+        
+        {/* Blog History Section */}
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold flex items-center gap-2">
+            <BookOpen className="h-5 w-5" />
+            Blog Post History
+          </h2>
+          
+          <Card className="p-0 overflow-hidden">
+            {isLoadingBlogs ? (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                <span>Loading blog history...</span>
+              </div>
+            ) : error ? (
+              <Alert className="m-4 bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-800">
+                <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : blogs.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">
+                <p>No blog posts found. Generate your first blog to see it here.</p>
+              </div>
+            ) : (
+              <>
+                <Table>
+                  <TableCaption>A list of your generated blog posts</TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Topic</TableHead>
+                      <TableHead className="hidden md:table-cell">Created</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {blogs.map((blog) => (
+                      <TableRow key={blog._id}>
+                        <TableCell className="font-medium">{blog.title}</TableCell>
+                        <TableCell>{blog.topic}</TableCell>
+                        <TableCell className="hidden md:table-cell">{formatDate(blog.createdAt)}</TableCell>
+                        <TableCell className="text-right">
+                          <a
+                            href={blog.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-transparent shadow-sm hover:bg-accent hover:text-accent-foreground h-9 px-4 py-2"
+                          >
+                            <ExternalLink className="mr-2 h-4 w-4" />
+                            View
+                          </a>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                
+                {/* Pagination */}
+                {pagination.pages > 1 && (
+                  <div className="flex items-center justify-between px-4 py-4 border-t">
+                    <div className="text-sm text-muted-foreground">
+                      Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} blogs
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => changePage(pagination.page - 1)}
+                        disabled={pagination.page <= 1}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        <span className="sr-only">Previous</span>
+                      </Button>
+                      <div className="text-sm">
+                        Page {pagination.page} of {pagination.pages}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => changePage(pagination.page + 1)}
+                        disabled={pagination.page >= pagination.pages}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                        <span className="sr-only">Next</span>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+        </div>
 
-        <div className="space-y-6">
-          <h2 className="text-xl font-semibold">Environment Setup</h2>
+        {/* Environment Setup Section */}
+        {/* <div className="space-y-6">
+          <h2 className="text-2xl font-semibold">Environment Setup</h2>
           
           <Card className="p-6 space-y-4">
             <div className="flex items-start gap-2">
@@ -82,31 +262,12 @@ export default function AdminPage() {
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Secure Your Credentials</AlertTitle>
               <AlertDescription className="text-sm">
-                Never commit your .env.local file to version control. Ensure it's included in your .gitignore file.
+                Never commit your .env.local file to version control. Ensure it&apos;s included in your .gitignore file.
               </AlertDescription>
             </Alert>
           </Card>
-          
-          <h2 className="text-xl font-semibold mt-8">Google OAuth Setup</h2>
-          <Card className="p-6 space-y-4">
-            <ol className="list-decimal list-inside space-y-3 text-sm">
-              <li>Go to the <a href="https://console.cloud.google.com/" target="_blank" className="text-primary hover:underline">Google Cloud Console</a></li>
-              <li>Create a new project or select an existing one</li>
-              <li>Navigate to "APIs & Services" > "Credentials"</li>
-              <li>Click "Create Credentials" > "OAuth client ID"</li>
-              <li>Set the application type to "Web application"</li>
-              <li>Add authorized redirect URIs:
-                <code className="block bg-muted p-2 rounded-md mt-2 text-xs">
-                  http://localhost:3000/api/auth/callback
-                </code>
-                <span className="text-muted-foreground">(Add your production URL when deploying)</span>
-              </li>
-              <li>Click "Create" and note your Client ID and Client Secret</li>
-              <li>Enable the Blogger API in "APIs & Services" > "Library"</li>
-            </ol>
-          </Card>
-        </div>
+        </div> */}
       </div>
     </div>
   );
-} 
+}

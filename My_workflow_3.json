@@ -1,0 +1,296 @@
+{
+  "name": "My workflow 3",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-blog",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -620,
+        520
+      ],
+      "id": "1b075655-1ebd-4874-a463-37e8288bb88e",
+      "webhookId": "62b81d21-fce5-4fc8-99da-b40cd25334df"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Validate input parameters\nconst input = $input.item.json.body || $input.item.json;\n\nif (!input.gemini_api_key || !input.blog_id || !input.topic || !input.access_token) {\n  return {\n    error: true,\n    message: 'Missing required parameters: gemini_api_key, blog_id, topic, and access_token are required'\n  };\n}\n\n// Return validated data\nreturn {\n  gemini_api_key: input.gemini_api_key,\n  blog_id: input.blog_id,\n  topic: input.topic,\n  access_token: input.access_token\n};"
+      },
+      "name": "Validate Input1",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        520
+      ],
+      "id": "8adf7807-547a-446d-b58c-6ee3098948d1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{!$json.error}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "name": "Input Valid?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        520
+      ],
+      "id": "a81b66b6-6fd4-4d5c-b752-09e2f6c1c0c6"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key={{$('Input Valid?1').item.json['gemini_api_key']}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "queryAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"You are a professional AI researcher specialist and write articles to explain new and complex topics in simple and easy to understand language. The articles are SEO friendly, keyword rich and hook users within seconds with catchy title and 800 to 1800 words. I will use this article on blogger in html mode. Strictly just write the title and content in body in pure html tags with formatting on topic {{$('Input Valid?1').item.json['topic']}}.\\nExample article (Strictly follow this format):\\nGoogle Veo 2: Unleashing the Future of AI Video Generation\\n\\n<p>Prepare to witness a seismic shift in digital creativity. Google has just unveiled Veo 2, their latest groundbreaking text-to-video AI model, and it's set to redefine how we create and consume video content. As an AI researcher, seeing this level of progress in generative video is nothing short of astonishing.</p>\\n\\n<p>Veo 2 isn't just another AI video generator; it's a significant leap forward building on Google's existing AI expertise. It promises to generate high-quality, high-definition (1080p) video clips that are not only longer but also remarkably coherent, maintaining consistency in objects and style throughout the generated footage. This tackles a major challenge that has plagued earlier AI video models.</p>\\n\\n<p>What makes Veo 2 stand out? It's the level of detail and control it offers. Users can provide detailed text prompts, and Veo 2 understands cinematic concepts, allowing creators to specify shots like \\\"cinematic,\\\" \\\"aerial view,\\\" or even \\\"timelapse.\\\" It can also take an existing image and generate a video based on its content, adding dynamic movement and narrative to a static frame.</p>\\n\\n<p>From a technological standpoint, Veo 2 leverages advanced generative AI techniques, likely building upon diffusion models similar to those powering impressive image generation. The key innovation appears to be in extending the coherence and temporal consistency across longer video sequences, allowing for more complex scenes and narratives to unfold naturally within the generated content.</p>\\n\\n<p>The implications of Google's Veo 2 are immense. For content creators, filmmakers, marketers, and artists, this is a powerful new tool that dramatically lowers the barrier to entry for high-quality video production. Imagine generating concept videos, storyboards, social media clips, or even short films from simple text descriptions. The speed and flexibility it offers could revolutionize workflows and unlock unprecedented creative potential.</p>\\n\\n<p>While still under development and likely to evolve, Veo 2 positions Google firmly at the forefront of the generative AI video race. It signals a future where complex video creation might be as accessible as writing a paragraph. Keep your eyes on Google's AI progress – Veo 2 is just the beginning of what's possible.</p>\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {
+          "response": {}
+        }
+      },
+      "name": "Generate Blog Content1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -20,
+        460
+      ],
+      "id": "f2078d39-696a-46ab-802a-70143ccb7ef4"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract blog content from Gemini API response\nconst response = $input.item.json;\n\nif (!response.candidates || !response.candidates[0] || !response.candidates[0].content || !response.candidates[0].content.parts || !response.candidates[0].content.parts[0].text) {\n  return {\n    error: true,\n    message: 'Failed to generate blog content'\n  };\n}\n\n// const blogContent = response.candidates[0].content.parts[0].text;\n// const blogTitle = $node[\"Input Valid?1\"].json.topic;\n\nconst lines = response.candidates[0].content.parts[0].text.split('\\n\\n');\nconst title = lines[0].replace(/<h2>|<\\/h2>/g, '').trim();\nconst content = lines.slice(1, -1).join('\\n\\n').trim();\n\n// return {\n//   title: blogTitle,\n//   content: blogContent,\n//   blog_id: $node[\"Input Valid?1\"].json.blog_id,\n//   access_token: $node[\"Input Valid?1\"].json.access_token\n// };\n\nreturn {\n  title: title.trim(),\n  content: content.trim(),\n  blog_id: $node[\"Input Valid?1\"].json.blog_id,\n  access_token: $node[\"Input Valid?1\"].json.access_token\n};"
+      },
+      "name": "Process Content1",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        180,
+        460
+      ],
+      "id": "37551511-51b2-4f60-acc8-23a5a34c1809"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://www.googleapis.com/blogger/v3/blogs/{{$node[\"Process Content1\"].json[\"blog_id\"]}}/posts/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "headerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Process Content1').item.json['access_token'] }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "kind",
+              "value": "blogger#post"
+            },
+            {
+              "name": "title",
+              "value": "={{$node[\"Process Content1\"].json['title']}}"
+            },
+            {
+              "name": "content",
+              "value": "={{$node[\"Process Content1\"].json[\"content\"]}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {}
+        }
+      },
+      "name": "Publish To Blog1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        380,
+        460
+      ],
+      "id": "a8685b97-c5d3-4afa-97de-4eb094a2a38a"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Format successful response\nconst response = $input.item.json;\n\nreturn {\n  success: true,\n  url: response.url,\n  title: response.title,\n  published: response.published\n};"
+      },
+      "name": "Success Response1",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        580,
+        460
+      ],
+      "id": "6d5646f5-faf3-4660-b927-2a63f7d689c1"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Return error message\nreturn {\n  success: false,\n  message: $input.item.json.message || 'Validation error: All fields are required'\n};"
+      },
+      "name": "Error Response1",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        660
+      ],
+      "id": "88f9faca-6cf2-4e1d-89a1-e8585bcce0cc"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "name": "Respond to Webhook1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        780,
+        520
+      ],
+      "id": "8d5a0cf3-ea3a-4271-a296-c0aee164aec4"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Validate Input1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input1": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?1": {
+      "main": [
+        [
+          {
+            "node": "Generate Blog Content1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Blog Content1": {
+      "main": [
+        [
+          {
+            "node": "Process Content1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Content1": {
+      "main": [
+        [
+          {
+            "node": "Publish To Blog1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish To Blog1": {
+      "main": [
+        [
+          {
+            "node": "Success Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Response1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Response1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "81bef002-a8aa-47b3-8679-c1a796daaddb",
+  "meta": {
+    "instanceId": "e5108e47c483c0775f22a823ac9df37e89a07b91c148b68ea447d461e1621fff"
+  },
+  "id": "fIkovSUdmC9EbDoi",
+  "tags": []
+}

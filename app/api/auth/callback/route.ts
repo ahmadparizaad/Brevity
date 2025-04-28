@@ -3,6 +3,8 @@ import { google } from 'googleapis';
 import { cookies } from 'next/headers';
 import { getIronSession } from 'iron-session';
 import { sessionOptions, SessionData } from '@/lib/session';
+import { connectToDatabase } from '@/lib/mongodb';
+import User from '@/models/User';
 
 // Add dynamic export for API routes
 export const dynamic = 'force-dynamic';
@@ -56,6 +58,26 @@ export async function GET(request: Request) {
     
     // Save the session
     await session.save();
+    
+    // Connect to MongoDB and save or update user
+    try {
+      await connectToDatabase();
+      
+      // Find user by email or create a new one
+      await User.findOneAndUpdate(
+        { email: userInfo.data.email },
+        {
+          name: userInfo.data.name,
+          picture: userInfo.data.picture,
+        },
+        { upsert: true, new: true }
+      );
+      
+      console.log('User saved/updated in MongoDB:', userInfo.data.email);
+    } catch (dbError) {
+      console.error('Error saving user to MongoDB:', dbError);
+      // Continue with auth flow even if DB save fails
+    }
     
     return response;
   } catch (error) {
