@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "app/api/publish/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/n8n-proxy/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/auth/get-token/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}

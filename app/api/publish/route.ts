@@ -229,6 +229,11 @@ export async function POST(request: Request) {
 async function generateBlogContent(apiKey: string, topic: string) {
   try {
     console.log('Starting Gemini API request');
+    
+    // Add timeout control with AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+    
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key=${apiKey}`,
       {
@@ -251,8 +256,12 @@ Google Veo 2: Unleashing the Future of AI Video Generation
             }
           ]
         }),
+        signal: controller.signal // Add AbortController signal
       }
     );
+    
+    // Clear the timeout since the request completed
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -278,6 +287,15 @@ Google Veo 2: Unleashing the Future of AI Video Generation
     return data;
   } catch (error) {
     console.error('Error in Gemini API call:', error);
+    
+    // Special handling for timeout errors
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        error: true,
+        message: 'Request to Gemini API timed out after 25 seconds. Please try again.'
+      };
+    }
+    
     return {
       error: true,
       message: error instanceof Error ? error.message : 'Failed to generate blog content'
@@ -323,6 +341,10 @@ async function publishToBlog(processedContent: any) {
   try {
     console.log('Publishing to blog ID:', processedContent.blog_id);
     
+    // Add timeout control with AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+    
     const response = await fetch(
       `https://www.googleapis.com/blogger/v3/blogs/${processedContent.blog_id}/posts/`,
       {
@@ -336,8 +358,12 @@ async function publishToBlog(processedContent: any) {
           title: processedContent.title,
           content: processedContent.content
         }),
+        signal: controller.signal // Add AbortController signal
       }
     );
+    
+    // Clear the timeout since the request completed
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -401,6 +427,15 @@ async function publishToBlog(processedContent: any) {
     return data;
   } catch (error) {
     console.error('Error publishing to blog:', error);
+    
+    // Special handling for timeout errors
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        error: true,
+        message: 'Request to Blogger API timed out after 25 seconds. Please try again.'
+      };
+    }
+    
     return {
       error: true,
       message: error instanceof Error ? error.message : 'Failed to publish blog post'
