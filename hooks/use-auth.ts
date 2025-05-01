@@ -54,6 +54,26 @@ export function useAuth() {
       console.error('Failed to logout:', error);
     }
   };
+  
+  // Add a function to handle token refresh errors by checking if re-authentication is needed
+  const handleAuthError = async (error: any) => {
+    if (axios.isAxiosError(error) && error.response?.status === 401) {
+      // Check if the error response indicates need for re-authentication
+      const needsReauth = error.response.data?.needsReauthentication;
+      
+      if (needsReauth) {
+        console.warn('Authentication expired, redirecting to login...');
+        // Clear any stale auth state
+        await logout();
+        // Redirect to login after a short delay
+        setTimeout(() => {
+          login();
+        }, 500);
+        return true; // Error was handled
+      }
+    }
+    return false; // Error was not handled
+  };
 
   useEffect(() => {
     checkAuthStatus();
@@ -63,6 +83,7 @@ export function useAuth() {
     ...authState,
     login,
     logout,
-    checkAuthStatus
+    checkAuthStatus,
+    handleAuthError // Export the new function
   };
-} 
+}

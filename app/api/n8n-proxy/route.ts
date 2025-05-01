@@ -32,8 +32,8 @@ export async function POST(request: Request) {
       gemini_api_key?: string;
     };
 
-    // Forward to n8n webhook
-    const response = await fetch('https://delicate-monitor-frequently.ngrok-free.app/webhook/generate-blog', {
+    // Forward to n8n webhook https://delicate-monitor-frequently.ngrok-free.app/webhook/generate-blog
+    const response = await fetch('http://localhost:5678/webhook-test/generate-blog', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

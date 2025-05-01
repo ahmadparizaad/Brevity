@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDistanceToNow } from 'date-fns';
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface BlogPost {
   _id: string;
@@ -112,10 +113,11 @@ export default function AdminPage() {
   }, [isAuthenticated, isLoading]);
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6 lg:p-8">
+    <div className="min-h-screen p-4 md:p-6 lg:p-8">
       <div className="max-w-5xl mx-auto space-y-8">
         <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <div className="flex items-center gap-2">
           <Button 
             variant="outline" 
             onClick={() => router.push('/')}
@@ -124,7 +126,10 @@ export default function AdminPage() {
             <ChevronLeft className="h-4 w-4" />
             Back to Home
           </Button>
+            <ThemeToggle />
+            </div>
         </div>
+
         
         {isAuthenticated && (
           <Alert className="bg-green-50 dark:bg-green-950 border-green-300 dark:border-green-800">
@@ -141,11 +146,11 @@ export default function AdminPage() {
             Blog Post History
           </h2>
           
-          <Card className="p-0 overflow-hidden">
+          <Card className="p-6 bg-white-800/80 dark:bg-white-800/10 border-black/5 dark:border-white/10 hover:shadow-xl dark:hover:shadow-white/20 transition-shadow duration-200 rounded-3xl">
             {isLoadingBlogs ? (
               <div className="flex items-center justify-center p-8">
                 <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                <span>Loading blog history...</span>
+                <span>Loading your blog history...</span>
               </div>
             ) : error ? (
               <Alert className="m-4 bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-800">
@@ -155,7 +160,7 @@ export default function AdminPage() {
               </Alert>
             ) : blogs.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground">
-                <p>No blog posts found. Generate your first blog to see it here.</p>
+                <p>You haven&apos;t generated any blog posts yet. Go back to the home page to create your first blog.</p>
               </div>
             ) : (
               <>
@@ -164,7 +169,7 @@ export default function AdminPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Title</TableHead>
-                      <TableHead>Topic</TableHead>
+                      {/* <TableHead>Topic</TableHead> */}
                       <TableHead className="hidden md:table-cell">Created</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -173,7 +178,7 @@ export default function AdminPage() {
                     {blogs.map((blog) => (
                       <TableRow key={blog._id}>
                         <TableCell className="font-medium">{blog.title}</TableCell>
-                        <TableCell>{blog.topic}</TableCell>
+                        {/* <TableCell>{blog.topic}</TableCell> */}
                         <TableCell className="hidden md:table-cell">{formatDate(blog.createdAt)}</TableCell>
                         <TableCell className="text-right">
                           <a

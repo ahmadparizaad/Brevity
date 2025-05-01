@@ -5,10 +5,10 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Send, Eye, Key, BookOpen, FileText, ExternalLink, LogIn, LogOut, Settings } from "lucide-react";
-import { useTheme } from "next-themes";
+import { Loader2, Send, Eye, Key, BookOpen, FileText, ExternalLink, LogIn, LogOut, Settings, AlertTriangle } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import axios from 'axios';
 import { useAuth } from "@/hooks/use-auth";
 import Link from "next/link";
@@ -23,6 +23,7 @@ interface BlogPayload {
 export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [blogUrl, setBlogUrl] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
   const [formData, setFormData] = useState<BlogPayload>({
     gemini_api_key: typeof window !== "undefined" ? localStorage.getItem("gemini_api_key") ?? "" : "",
     blog_id: typeof window !== "undefined" ? localStorage.getItem("blog_id") ?? "" : "",
@@ -30,7 +31,7 @@ export default function Home() {
   });
   
   const { toast } = useToast();
-  const { isAuthenticated, isLoading: authLoading, user, login, logout } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user, login, logout, handleAuthError } = useAuth();
 
   // Function to get access token
   const getAccessToken = async () => {
@@ -39,12 +40,17 @@ export default function Home() {
       return response.data.access_token;
     } catch (error) {
       console.error('Failed to get access token:', error);
+      // Check if we need to re-authenticate
+      await handleAuthError(error);
       return null;
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Clear previous errors
+    setPermissionError(null);
     
     // Check if user is authenticated
     if (!isAuthenticated) {
@@ -85,7 +91,7 @@ export default function Home() {
       
       // Use our proxy API instead of calling n8n directly to avoid CORS issues
       const response = await axios.post(
-        "/api/n8n-proxy", 
+        "/api/publish", 
         payloadWithToken
       );
 
@@ -94,8 +100,8 @@ export default function Home() {
       }
 
       const data = response.data;
-      console.log("Blog generated and published:", data[0].url);
-      setBlogUrl(data[0].url);
+      console.log("Blog generated and published:", data.url);
+      setBlogUrl(data.url);
       
       // Open blog in new tab
       if (data.url) {
@@ -115,19 +121,21 @@ export default function Home() {
         localStorage.setItem("blog_id", formData.blog_id);
       }
     } catch (error: any) {
-      // Handle authentication errors
-      if (error.response && error.response.status === 401) {
-        toast({
-          title: "Authentication Error",
-          description: "Your session has expired. Please login again.",
-          variant: "destructive",
-        });
+      // Check if we need to re-authenticate
+      const wasAuthError = await handleAuthError(error);
+      if (wasAuthError) return;
+
+      // Handle permission errors (403)
+      if (error.response && error.response.status === 403) {
+        const errorMessage = error.response.data?.message || "You don't have permission to post to this blog.";
+        setPermissionError(errorMessage);
         return;
       }
       
+      // Handle other errors
       toast({
         title: "Error",
-        description: error.response?.data?.error || error.message || "Failed to generate and publish blog. Please try again.",
+        description: error.response?.data?.message || error.message || "Failed to generate and publish blog. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -136,17 +144,17 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6 lg:p-8">
+    <div className="min-h-screen p-4 md:p-6 lg:p-8">
       <div className="max-w-2xl mx-auto space-y-8">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <BookOpen className="h-6 w-6" />
-            <h1 className="text-2xl font-bold">Brevity AI</h1>
+            {/* <h1 className="text-2xl font-bold">Brevity AI</h1> */}
+            
           </div>
           <div className="flex items-center gap-2">
             {isAuthenticated ? (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">{user?.email}</span>
+                {/* <span className="text-sm text-muted-foreground">{user?.email}</span> */}
                 {isAuthenticated && (
                   <Link href="/admin">
                     <Button
@@ -202,7 +210,25 @@ export default function Home() {
           </Card>
         )}
 
-        <Card className="p-6">
+        {permissionError && (
+          <Alert className="bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-800">
+            <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
+            <AlertTitle>Permission Denied</AlertTitle>
+            <AlertDescription>
+              {permissionError}
+              <p className="mt-2 text-sm">
+                Please make sure that:
+                <ul className="list-disc pl-5 mt-1 space-y-1">
+                  <li>The blog ID is correct</li>
+                  <li>You are the owner or have author/admin permissions on the blog</li>
+                  <li>The blog allows API posting</li>
+                </ul>
+              </p>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <Card className="p-6 bg-white-800/80 dark:bg-white-800/10 border-black/5 dark:border-white/10 hover:shadow-xl dark:hover:shadow-white/20 transition-shadow duration-200 rounded-3xl">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="api-key" className="flex items-center gap-2">
@@ -255,7 +281,7 @@ export default function Home() {
 
             <Button
               type="submit"
-              className="w-full transition-all duration-200"
+              className="w-full rounded-lg transition-all duration-200"
               disabled={isLoading || !isAuthenticated}
             >
               {isLoading ? (
