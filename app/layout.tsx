@@ -4,13 +4,15 @@ import { Inter } from 'next/font/google';
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
 import Navbar from '@/components/Navbar';
-import favicon from '@/public/favicon.ico';
-
+import { Analytics } from "@vercel/analytics/react";
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Blog Generator',
-  description: 'Generate blogs using Gemini AI',
+  title: 'Brevity AI',
+  description: 'Generate and Publish blogs using AI',
+  icons: {
+    icon: '/favicon.svg',
+  },
 };
 
 export default function RootLayout({
@@ -30,6 +32,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <Navbar />
+          <Analytics />
           {children}
           <Toaster />
         </ThemeProvider>
