@@ -4,6 +4,7 @@ import { IUser } from './User';
 export interface IBlogPost extends Document {
   title: string;
   topic: string;
+  category: string;
   url: string;
   content?: string;
   user: mongoose.Types.ObjectId | IUser;
@@ -15,6 +16,7 @@ const BlogPostSchema: Schema = new Schema(
   {
     title: { type: String, required: true },
     topic: { type: String, required: true },
+    category: { type: String, default: 'general' },
     url: { type: String, required: true },
     content: { type: String },
     user: { 

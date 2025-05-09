@@ -3,20 +3,26 @@
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Send, Eye, Key, BookOpen, FileText, ExternalLink, LogIn, LogOut, Settings, AlertTriangle } from "lucide-react";
+import { Loader2, Send, Eye, FileText, ExternalLink, LogIn, LogOut, Settings, AlertTriangle, LayoutList, PenLine } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { BLOG_CATEGORIES } from "@/lib/category-prompts";
+import { SubscriptionLimitDialog } from "@/components/subscription-limit-dialog";
+import { getAppropriateUpgradePlan, getSubscriptionPlan, SUBSCRIPTION_PLANS } from "@/lib/subscription-plans";
 import axios from 'axios';
 import { useAuth } from "@/hooks/use-auth";
 import Link from "next/link";
 
 interface BlogPayload {
-  gemini_api_key: string;
   blog_id: string;
   topic: string;
+  category: string;
+  custom_instructions?: string;
   access_token?: string;
 }
 
@@ -25,9 +31,34 @@ export default function Home() {
   const [blogUrl, setBlogUrl] = useState<string | null>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [formData, setFormData] = useState<BlogPayload>({
-    gemini_api_key: typeof window !== "undefined" ? localStorage.getItem("gemini_api_key") ?? "" : "",
-    blog_id: typeof window !== "undefined" ? localStorage.getItem("blog_id") ?? "" : "",
+    blog_id: "", // Initialize with empty string, we'll update from localStorage in useEffect
     topic: "",
+    category: "general",
+  });
+  const [isClient, setIsClient] = useState(false);
+  
+  // Load blog ID from localStorage after mount (client-side only)
+  useEffect(() => {
+    setIsClient(true);
+    const savedBlogId = localStorage.getItem("blog_id");
+    if (savedBlogId) {
+      setFormData(prev => ({ ...prev, blog_id: savedBlogId }));
+    }
+  }, []);
+  
+  // Subscription limit dialog state
+  const [showSubscriptionDialog, setShowSubscriptionDialog] = useState(false);
+  const [subscriptionData, setSubscriptionData] = useState<{
+    currentUsage: number;
+    currentPlan: any;
+    upgradePlan: any;
+    limitType?: string;
+    limit?: number;
+    resetTime?: Date;
+  }>({
+    currentUsage: 0,
+    currentPlan: SUBSCRIPTION_PLANS[0],
+    upgradePlan: null,
   });
   
   const { toast } = useToast();
@@ -63,7 +94,7 @@ export default function Home() {
     }
     
     // Validate inputs
-    if (!formData.gemini_api_key || !formData.blog_id || !formData.topic) {
+    if (!formData.blog_id || !formData.topic) {
       toast({
         title: "Validation Error",
         description: "Please fill in all fields",
@@ -115,15 +146,53 @@ export default function Home() {
         description: "Blog generated and published successfully",
       });
 
-      // Store API key securely
-      if (typeof window !== "undefined") {
-        localStorage.setItem("gemini_api_key", formData.gemini_api_key);
+      // Store blog ID in local storage
+      if (isClient) {
         localStorage.setItem("blog_id", formData.blog_id);
       }
     } catch (error: any) {
       // Check if we need to re-authenticate
       const wasAuthError = await handleAuthError(error);
       if (wasAuthError) return;
+
+      // Handle subscription limit errors (429 with subscription limit info)
+      if (error.response && error.response.status === 429) {
+        // Monthly subscription limit reached
+        if (error.response.data?.subscriptionLimitReached) {
+          const { currentUsage, limit, planName, resetTime } = error.response.data;
+          const currentPlan = getSubscriptionPlan(planName.toLowerCase());
+          const upgradePlan = getAppropriateUpgradePlan(currentUsage);
+          
+          setSubscriptionData({
+            currentUsage,
+            currentPlan,
+            upgradePlan,
+            limitType: 'monthly',
+            limit: limit,
+            resetTime: resetTime ? new Date(resetTime) : undefined
+          });
+          setShowSubscriptionDialog(true);
+          return;
+        }
+        
+        // Daily subscription limit reached
+        if (error.response.data?.dailyLimitReached) {
+          const { currentDailyUsage, dailyLimit, planName, resetTime } = error.response.data;
+          const currentPlan = getSubscriptionPlan(planName.toLowerCase());
+          const upgradePlan = getAppropriateUpgradePlan(currentPlan.limits.postsPerMonth);
+          
+          setSubscriptionData({
+            currentUsage: currentDailyUsage,
+            currentPlan,
+            upgradePlan,
+            limitType: 'daily',
+            limit: dailyLimit,
+            resetTime: resetTime ? new Date(resetTime) : undefined
+          });
+          setShowSubscriptionDialog(true);
+          return;
+        }
+      }
 
       // Handle permission errors (403)
       if (error.response && error.response.status === 403) {
@@ -145,6 +214,18 @@ export default function Home() {
 
   return (
     <div className="min-h-screen p-4 md:p-6 lg:p-8">
+      {/* Subscription Limit Dialog */}
+      <SubscriptionLimitDialog
+        isOpen={showSubscriptionDialog}
+        onClose={() => setShowSubscriptionDialog(false)}
+        currentUsage={subscriptionData.currentUsage}
+        currentPlan={subscriptionData.currentPlan}
+        upgradePlan={subscriptionData.upgradePlan}
+        limitType={subscriptionData.limitType}
+        limit={subscriptionData.limit}
+        resetTime={subscriptionData.resetTime}
+      />
+      
       <div className="max-w-2xl mx-auto space-y-8">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -228,25 +309,8 @@ export default function Home() {
           </Alert>
         )}
 
-        <Card className="p-6 bg-white-800/80 dark:bg-white-800/10 border-black/5 dark:border-white/10 hover:shadow-xl dark:hover:shadow-white/20 transition-shadow duration-200 rounded-3xl">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-2">
-              <Label htmlFor="api-key" className="flex items-center gap-2">
-                <Key className="h-4 w-4" />
-                Gemini API Key
-              </Label>
-              <Input
-                id="api-key"
-                type="password"
-                placeholder="Enter your Gemini API key"
-                value={formData.gemini_api_key}
-                onChange={(e) =>
-                  setFormData({ ...formData, gemini_api_key: e.target.value })
-                }
-                className="transition-all duration-200"
-              />
-            </div>
-
+        <Card className="w-full px-14 py-8 bg-white-800/80 dark:bg-white-800/10 border-black/5 dark:border-white/10 hover:shadow-xl dark:hover:shadow-white/20 transition-shadow duration-200 rounded-3xl">
+          <form onSubmit={handleSubmit} className="space-y-8">
             <div className="space-y-2">
               <Label htmlFor="blog-id" className="flex items-center gap-2">
                 <FileText className="h-4 w-4" />
@@ -264,6 +328,31 @@ export default function Home() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="category" className="flex items-center gap-2">
+                <LayoutList className="h-4 w-4" />
+                Blog Category
+              </Label>
+              <Select
+                value={formData.category}
+                onValueChange={(value) => setFormData({ ...formData, category: value })}
+              >
+                <SelectTrigger className="transition-all duration-200">
+                  <SelectValue placeholder="Select a category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BLOG_CATEGORIES.map((category) => (
+                    <SelectItem key={category.value} value={category.value}>
+                      {category.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Select a category to get optimized content for your niche
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="topic" className="flex items-center gap-2">
                 <Eye className="h-4 w-4" />
                 Topic
@@ -277,6 +366,25 @@ export default function Home() {
                 }
                 className="transition-all duration-200"
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="custom-instructions" className="flex items-center gap-2">
+                <PenLine className="h-4 w-4" />
+                Custom Style & Instructions (Optional)
+              </Label>
+              <Textarea
+                id="custom-instructions"
+                placeholder="Add any specific style instructions, tone preferences, or special requirements for your blog post..."
+                value={formData.custom_instructions || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, custom_instructions: e.target.value })
+                }
+                className="min-h-[100px] transition-all duration-200 rounded-lg"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Customize the AI output with specific instructions like writing style, tone, formatting preferences, etc.
+              </p>
             </div>
 
             <Button

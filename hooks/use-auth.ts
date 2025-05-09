@@ -3,6 +3,7 @@ import axios from 'axios';
 
 interface User {
   email: string;
+  picture?: string;
 }
 
 interface AuthState {

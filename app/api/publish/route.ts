@@ -4,27 +4,48 @@ import { sessionOptions, SessionData } from '@/lib/session';
 import { connectToDatabase } from '@/lib/mongodb';
 import User from '@/models/User';
 import BlogPost from '@/models/BlogPost';
+import { Ratelimit } from '@upstash/ratelimit';
+import { kv } from '@vercel/kv';
+import { getCategoryPrompt } from '@/lib/category-prompts';
+import { getSubscriptionPlan, SUBSCRIPTION_PLANS } from '@/lib/subscription-plans';
+
+// Create a new rateLimit instance for anonymous users (fallback)
+const rateLimit = new Ratelimit({
+  redis: kv, // Use Vercel KV for storage
+  limiter: Ratelimit.slidingWindow(2, '5m'), // Limit to 2 request per 5 minutes for anonymous users
+  analytics: true, // Enable analytics
+});
 
 // Define the dynamic export for API routes
 export const dynamic = 'force-dynamic';
 
 // Define the input types
 interface PublishRequest {
-  gemini_api_key: string;
   blog_id: string;
   topic: string;
+  category: string;
+  custom_instructions?: string;
   access_token: string;
 }
 
 interface UserUpdates {
   blog_id?: string;
-  gemini_api_key?: string;
 }
 
 export async function POST(request: Request) {
   try {
     console.log('Starting publish endpoint processing');
     
+    // Get Gemini API key from environment variables
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      console.error('GEMINI_API_KEY environment variable not set');
+      return NextResponse.json({
+        success: false,
+        message: 'Server configuration error: Gemini API key not available'
+      }, { status: 500 });
+    }
+
     // Connect to MongoDB first
     try {
       await connectToDatabase();
@@ -40,14 +61,94 @@ export async function POST(request: Request) {
     // Get the session for user authentication
     let userId = null;
     let userEmail = null;
+    let user = null;
+    let subscriptionPlan = null;
+    
     try {
       const session = await getIronSession<SessionData>(request, new Response(), sessionOptions);
       if (session.isLoggedIn && session.user?.email) {
         userEmail = session.user.email;
-        const user = await User.findOne({ email: session.user.email });
+        user = await User.findOne({ email: session.user.email });
+        
         if (user) {
           userId = user._id;
           console.log('Found user:', userId);
+          
+          // Get subscription plan details
+          subscriptionPlan = getSubscriptionPlan(user.subscription?.plan || 'free');
+          console.log(`User subscription plan: ${subscriptionPlan.name}, Usage: ${user.subscription?.currentUsage || 0}/${subscriptionPlan.limits.postsPerMonth}`);
+          
+          // Check if we've passed the monthly reset date
+          const now = new Date();
+          const nextResetDate = user.subscription?.nextResetDate;
+          
+          if (nextResetDate && now >= nextResetDate) {
+            // Time to reset the monthly counter
+            console.log(`Monthly reset date reached (${nextResetDate}). Resetting usage count for user ${userId}`);
+            
+            // Calculate the next reset date (1 month from current reset date)
+            const newResetDate = new Date(nextResetDate);
+            newResetDate.setMonth(newResetDate.getMonth() + 1);
+            
+            // Update the user with reset count and new reset date
+            await User.updateOne(
+              { _id: userId },
+              { 
+                'subscription.currentUsage': 0,
+                'subscription.nextResetDate': newResetDate
+              }
+            );
+            
+            // Reload the user to get updated values
+            user = await User.findOne({ _id: userId });
+            console.log(`User subscription reset. Next reset date: ${user.subscription?.nextResetDate}`);
+          }
+          
+          // Check if user has reached their monthly subscription limit
+          if (user.subscription?.currentUsage >= subscriptionPlan.limits.postsPerMonth) {
+            // Calculate time until reset
+            const resetTime = user.subscription?.nextResetDate || new Date();
+            
+            return NextResponse.json({
+              success: false,
+              subscriptionLimitReached: true,
+              currentUsage: user.subscription.currentUsage,
+              limit: subscriptionPlan.limits.postsPerMonth,
+              planName: subscriptionPlan.name,
+              resetTime: resetTime.toISOString(),
+              message: `You've reached your ${subscriptionPlan.name} plan limit of ${subscriptionPlan.limits.postsPerMonth} posts per month. Please upgrade your subscription.`
+            }, { status: 429 });
+          }
+
+          // Check if user has reached their daily subscription limit
+          if (subscriptionPlan.limits.postsPerDay) {
+            // Get posts created today
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            const postsCreatedToday = await BlogPost.countDocuments({
+              user: userId,
+              createdAt: { $gte: today }
+            });
+            
+            console.log(`Posts created today: ${postsCreatedToday}/${subscriptionPlan.limits.postsPerDay}`);
+            
+            if (postsCreatedToday >= subscriptionPlan.limits.postsPerDay) {
+              // Calculate reset time (tomorrow at midnight)
+              const resetTime = new Date(today);
+              resetTime.setDate(resetTime.getDate() + 1);
+              
+              return NextResponse.json({
+                success: false,
+                dailyLimitReached: true,
+                currentDailyUsage: postsCreatedToday,
+                dailyLimit: subscriptionPlan.limits.postsPerDay,
+                planName: subscriptionPlan.name,
+                resetTime: resetTime.toISOString(),
+                message: `You've reached your ${subscriptionPlan.name} plan limit of ${subscriptionPlan.limits.postsPerDay} posts per day. Please try again tomorrow or upgrade your subscription.`
+              }, { status: 429 });
+            }
+          }
         }
       } else {
         console.log('No authenticated user found in session');
@@ -57,14 +158,34 @@ export async function POST(request: Request) {
       // Continue without user authentication
     }
     
+    // If no authenticated user, apply rate limiting for anonymous users
+    if (!userId) {
+      const ip = request.headers.get('x-forwarded-for') || 'anonymous';
+      const userAgent = request.headers.get('user-agent') || 'unknown';
+      const identifier = `${ip}_${userAgent.substring(0, 20)}`;
+      
+      const { success, limit, reset, remaining } = await rateLimit.limit(identifier);
+      
+      if (!success) {
+        console.log(`Rate limit exceeded for anonymous user ${identifier}`);
+        return NextResponse.json({
+          success: false,
+          anonymousLimitReached: true,
+          message: 'You\'ve reached the limit for anonymous users. Please sign in to continue.'
+        }, { status: 429 });
+      }
+      
+      console.log(`Anonymous rate limit check passed. Remaining: ${remaining}, Reset: ${reset}`);
+    }
+    
     // Parse JSON request body
     let requestData;
     try {
       requestData = await request.json();
       console.log('Request data parsed:', JSON.stringify({
-        hasGeminiKey: !!requestData.gemini_api_key,
         hasBlogId: !!requestData.blog_id,
         hasTopic: !!requestData.topic,
+        hasCategory: !!requestData.category,
         hasAccessToken: !!requestData.access_token
       }));
     } catch (parseError) {
@@ -76,25 +197,28 @@ export async function POST(request: Request) {
     }
     
     // Validate input parameters
-    if (!requestData.gemini_api_key || !requestData.blog_id || !requestData.topic || !requestData.access_token) {
+    if (!requestData.blog_id || !requestData.topic || !requestData.access_token) {
       console.log('Missing required parameters');
       return NextResponse.json({
         success: false,
-        message: 'Missing required parameters: gemini_api_key, blog_id, topic, and access_token are required'
+        message: 'Missing required parameters: blog_id, topic, and access_token are required'
       }, { status: 400 });
     }
 
     const validatedData: PublishRequest = {
-      gemini_api_key: requestData.gemini_api_key,
       blog_id: requestData.blog_id,
       topic: requestData.topic,
+      category: requestData.category || 'general', // Default to general if not provided
+      custom_instructions: requestData.custom_instructions || '', // Include custom instructions if provided
       access_token: requestData.access_token
     };
+    
+    console.log(`Using category: ${validatedData.category} for blog generation`);
 
     // Generate blog content with Gemini API
     try {
       console.log('Generating content for topic:', validatedData.topic);
-      const blogContent = await generateBlogContent(validatedData.gemini_api_key, validatedData.topic);
+      const blogContent = await generateBlogContent(geminiApiKey, validatedData.topic, validatedData.category, validatedData.custom_instructions);
       
       if (!blogContent || blogContent.error) {
         console.error('Content generation failed:', blogContent?.message);
@@ -156,20 +280,22 @@ export async function POST(request: Request) {
                   updates.blog_id = validatedData.blog_id;
                 }
                 
-                if (validatedData.gemini_api_key && !user.gemini_api_key) {
-                  updates.gemini_api_key = validatedData.gemini_api_key;
-                }
-                
-                if (Object.keys(updates).length > 0) {
-                  await User.updateOne({ _id: userId }, { $set: updates });
-                  console.log('Updated user settings');
-                }
+                // Increment usage count for subscription
+                await User.updateOne(
+                  { _id: userId },
+                  { 
+                    $set: updates,
+                    $inc: { 'subscription.currentUsage': 1 } 
+                  }
+                );
+                console.log('Updated user settings and incremented usage count');
               }
               
               // Create blog post record
               const blogPost = await BlogPost.create({
                 title: publishResult.title || processedContent.title,
                 topic: validatedData.topic,
+                category: validatedData.category,
                 url: publishResult.url,
                 user: userId,
                 content: processedContent.content || null,
@@ -189,7 +315,8 @@ export async function POST(request: Request) {
             success: true,
             url: publishResult.url,
             title: publishResult.title,
-            published: publishResult.published
+            published: publishResult.published,
+            category: validatedData.category
           });
           
         } catch (publishError) {
@@ -226,13 +353,23 @@ export async function POST(request: Request) {
 }
 
 // Function to generate blog content using Gemini API
-async function generateBlogContent(apiKey: string, topic: string) {
+async function generateBlogContent(apiKey: string, topic: string, category: string = 'general', customInstructions: string = '') {
   try {
-    console.log('Starting Gemini API request');
+    console.log('Starting Gemini API request for category:', category);
+    
+    // Get the category-specific prompt
+    const prompt = getCategoryPrompt(category, topic);
+    
+    // Add custom instructions if provided
+    const finalPrompt = customInstructions 
+      ? `${prompt}\n\nCustom Instructions: ${customInstructions}\n\nDon't use any markdown element such as #, ##, ###, *, **, etc.`
+      : `${prompt} Don't use any markdown element such as #, ##, ###, *, **, etc.`;
+    
+    console.log('Using custom instructions:', !!customInstructions);
     
     // Add timeout control with AbortController
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 50000); // 50 second timeout
     
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key=${apiKey}`,
@@ -246,11 +383,7 @@ async function generateBlogContent(apiKey: string, topic: string) {
             {
               parts: [
                 {
-                  text: `You are a professional content writer specialist and write articles to explain new and complex topics in simple and easy to understand language. The articles are SEO friendly, keyword rich and hook users within seconds with catchy title and 800 to 1300 words. I will use this article on blogger in html mode. Strictly just write the title and content in pure html tags with formatting on topic ${topic}.
-Example article (Strictly follow this format):
-Google Veo 2: Unleashing the Future of AI Video Generation
-
-<p>Prepare to witness a seismic shift in digital creativity. Google has just unveiled Veo 2, their latest groundbreaking text-to-video AI model, and it's set to redefine how we create and consume video content. As an AI researcher, seeing this level of progress in generative video is nothing short of astonishing.</p>`
+                  text: finalPrompt
                 }
               ]
             }
@@ -292,7 +425,7 @@ Google Veo 2: Unleashing the Future of AI Video Generation
     if (error instanceof Error && error.name === 'AbortError') {
       return {
         error: true,
-        message: 'Request to Gemini API timed out after 25 seconds. Please try again.'
+        message: 'Request to Gemini API timed out after 50 seconds. Please try again.'
       };
     }
     
@@ -315,8 +448,46 @@ function processContent(response: any, validatedData: PublishRequest) {
       throw new Error('Generated content format is invalid');
     }
     
-    const title = lines[0].replace(/<h1>|<\/h1>|<h2>|<\/h2>/g, '').trim();
-    const content = lines.slice(1).join('\n\n').trim();
+    // Extract and clean the title (remove any HTML tags)
+    const title = lines[0].replace(/<\/?[^>]+(>|$)/g, '').trim();
+    
+    // Process the content and remove prohibited HTML tags
+    let content = lines.slice(1).join('\n\n').trim();
+    
+    // Remove any full HTML document structure that might be present
+    content = content
+      // Remove DOCTYPE declarations
+      .replace(/<!DOCTYPE[^>]*>/i, '')
+      // Remove html, head, body tags
+      .replace(/<\/?html[^>]*>/gi, '')
+      .replace(/<\/?head[^>]*>/gi, '')
+      .replace(/<\/?body[^>]*>/gi, '')
+      // Remove meta tags
+      .replace(/<meta[^>]*>/gi, '')
+      // Remove title tags
+      .replace(/<\/?title[^>]*>/gi, '')
+      // Remove script and style tags with content
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+      // Remove comments
+      .replace(/<!--[\s\S]*?-->/g, '');
+    
+    // Further clean up any leftover HTML entities or harmful elements
+    content = content
+      .replace(/<\/?html[^>]*>/gi, '') // Make sure HTML tags are removed
+      .replace(/<\/?head[^>]*>/gi, '') // Make sure HEAD tags are removed
+      .replace(/<\/?body[^>]*>/gi, '') // Make sure BODY tags are removed
+      .replace(/<\/?iframe[^>]*>/gi, '') // Remove iframe tags
+      .replace(/<\/?embed[^>]*>/gi, '') // Remove embed tags
+      .replace(/<\/?object[^>]*>/gi, '') // Remove object tags
+      .replace(/<\/?script[^>]*>/gi, '') // Remove script tags
+      .replace(/<\/?style[^>]*>/gi, ''); // Remove style tags
+    
+    // Convert any markdown-like syntax that might have slipped through
+    content = content
+      .replace(/^# (.*?)$/gm, '<h2>$1</h2>') // Convert # headers to h2
+      .replace(/^## (.*?)$/gm, '<h3>$1</h3>') // Convert ## headers to h3
+      .replace(/^### (.*?)$/gm, '<h4>$1</h4>'); // Convert ### headers to h4
     
     if (!title || !content) {
       console.error('Failed to extract title or content');
@@ -343,7 +514,7 @@ async function publishToBlog(processedContent: any) {
     
     // Add timeout control with AbortController
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 50000); // 50 second timeout
     
     const response = await fetch(
       `https://www.googleapis.com/blogger/v3/blogs/${processedContent.blog_id}/posts/`,
@@ -432,7 +603,7 @@ async function publishToBlog(processedContent: any) {
     if (error instanceof Error && error.name === 'AbortError') {
       return {
         error: true,
-        message: 'Request to Blogger API timed out after 25 seconds. Please try again.'
+        message: 'Request to Blogger API timed out after 50 seconds. Please try again.'
       };
     }
     
