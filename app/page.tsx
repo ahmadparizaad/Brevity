@@ -237,6 +237,15 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 {/* <span className="text-sm text-muted-foreground">{user?.email}</span> */}
                 {isAuthenticated && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={logout}
+                  className="flex items-center gap-1"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </Button>
                   <Link href="/admin">
                     <Button
                       size="sm"
@@ -248,15 +257,7 @@ export default function Home() {
                     </Button>
                   </Link>
                 )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={logout}
-                  className="flex items-center gap-1"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Logout
-                </Button>
+                
               </div>
             ) : (
               <Button
