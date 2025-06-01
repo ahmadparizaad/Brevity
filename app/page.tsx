@@ -249,7 +249,7 @@ export default function Home() {
                   <Link href="/admin">
                     <Button
                       size="sm"
-                      variant="ghost"
+                      variant="outline"
                       className="flex items-center gap-1"
                     >
                       <Settings className="h-4 w-4" />
