@@ -236,7 +236,6 @@ export default function Home() {
             {isAuthenticated ? (
               <div className="flex items-center gap-2">
                 {/* <span className="text-sm text-muted-foreground">{user?.email}</span> */}
-                {isAuthenticated && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -246,6 +245,7 @@ export default function Home() {
                   <LogOut className="h-4 w-4" />
                   Logout
                 </Button>
+                {isAuthenticated && (
                   <Link href="/admin">
                     <Button
                       size="sm"
